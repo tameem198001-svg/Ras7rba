@@ -1,0 +1,136 @@
+name: Post-Merge Release
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+jobs:
+  post-merge:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check required secrets
+        id: check_secrets
+        run: |
+          missing_secrets=""
+          if [ -z "${{ secrets.ADMIN_GITHUB_TOKEN }}" ]; then missing_secrets="$missing_secrets ADMIN_GITHUB_TOKEN"; fi
+          if [ -z "${{ secrets.RENDER_API_KEY }}" ]; then missing_secrets="$missing_secrets RENDER_API_KEY"; fi
+          if [ -z "${{ secrets.RENDER_SERVICE_ID }}" ]; then missing_secrets="$missing_secrets RENDER_SERVICE_ID"; fi
+          if [ -z "${{ secrets.SLACK_WEBHOOK_URL }}" ]; then missing_secrets="$missing_secrets SLACK_WEBHOOK_URL"; fi
+
+          if [ -n "$missing_secrets" ]; then
+            echo "secrets_missing=true" >> $GITHUB_OUTPUT
+            echo "missing_list=$missing_secrets" >> $GITHUB_OUTPUT
+          else
+            echo "secrets_missing=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Warn when secrets missing
+        if: steps.check_secrets.outputs.secrets_missing == 'true'
+        run: |
+          echo "⚠️ Missing secrets:${{ steps.check_secrets.outputs.missing_list }}"
+          echo "⏭️ Skipping secret rotation, Render update and Canary phases."
+          # optional: send a Slack warning if SLACK_WEBHOOK_URL exists
+          if [ -n "${{ secrets.SLACK_WEBHOOK_URL }}" ]; then
+            curl -s -X POST "${{ secrets.SLACK_WEBHOOK_URL }}" -H 'Content-Type: application/json' -d "{\"text\":\"⚠️ Post-merge workflow ran but some secrets are missing:${{ steps.check_secrets.outputs.missing_list }}\"}"
+          fi
+
+      - name: Install gh CLI
+        if: steps.check_secrets.outputs.secrets_missing == 'false'
+        run: |
+          type -p curl >/dev/null || sudo apt-get update && sudo apt-get install -y curl
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+          sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y gh
+
+      - name: Authenticate gh with PAT
+        if: steps.check_secrets.outputs.secrets_missing == 'false'
+        env:
+          ADMIN_GITHUB_TOKEN: ${{ secrets.ADMIN_GITHUB_TOKEN }}
+        run: echo "$ADMIN_GITHUB_TOKEN" | gh auth login --with-token
+
+      - name: Generate new secret (once)
+        if: steps.check_secrets.outputs.secrets_missing == 'false'
+        id: secrets
+        run: |
+          NEW_SECRET=$(openssl rand -hex 32)
+          echo "new_secret=$NEW_SECRET" >> $GITHUB_OUTPUT
+
+      - name: Update GitHub Secrets (secure)
+        if: steps.check_secrets.outputs.secrets_missing == 'false'
+        uses: peter-evans/create-or-update-secret@v3
+        with:
+          token: ${{ secrets.ADMIN_GITHUB_TOKEN }}
+          secret-name: SESSION_SECRET
+          secret-value: ${{ steps.secrets.outputs.new_secret }}
+
+      - name: Update DIWAN_SECRET_KEY
+        if: steps.check_secrets.outputs.secrets_missing == 'false'
+        uses: peter-evans/create-or-update-secret@v3
+        with:
+          token: ${{ secrets.ADMIN_GITHUB_TOKEN }}
+          secret-name: DIWAN_SECRET_KEY
+          secret-value: ${{ steps.secrets.outputs.new_secret }}
+
+      - name: Update Render Environment Variables
+        if: steps.check_secrets.outputs.secrets_missing == 'false'
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          # Use Render API; verify endpoint in your Render account before relying on this
+          curl -s -X PUT "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/env-vars" \
+            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "envVars": [
+                {"key": "SESSION_SECRET", "value": "'"${{ steps.secrets.outputs.new_secret }}"'"},
+                {"key": "DIWAN_SECRET_KEY", "value": "'"${{ steps.secrets.outputs.new_secret }}"'"}
+              ]
+            }'
+
+      - name: Smoke Test
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://noor-diwan-v5.onrender.com/status)
+          if [ "$STATUS" != "200" ]; then
+            echo "Smoke test failed: HTTP $STATUS"
+            exit 1
+          fi
+
+      - name: Canary Deployment
+        if: steps.check_secrets.outputs.secrets_missing == 'false'
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          # Canary phases: 5% → 25% → 100% (adjust sleep/logic as needed)
+          for perc in 5 25 100; do
+            # ensure Render API supports traffic percentage patching; adapt if needed
+            curl -s -X PATCH "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/deploy" \
+              -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+              -H "Content-Type: application/json" \
+              -d "{\"percentage\": $perc}"
+            sleep 300
+          done
+
+      - name: Slack Notification (final)
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ -n "${{ secrets.SLACK_WEBHOOK_URL }}" ]; then
+            curl -s -X POST "${{ secrets.SLACK_WEBHOOK_URL }}" -H 'Content-Type: application/json' -d '{"text":"✅ Post-merge workflow completed (or skipped some steps if secrets missing)."}'
+          else
+            echo "No Slack webhook configured; skipping notification."
+          fi
+
+      - name: Release Announcement
+        if: steps.check_secrets.outputs.secrets_missing == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.ADMIN_GITHUB_TOKEN }}
+        run: |
+          gh issue create --repo ${{ github.repository }} -t "🎉 Release deployed" -b "Post-merge workflow completed. If secrets were missing, some steps were skipped." -l announcement
