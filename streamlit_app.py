@@ -1,141 +1,80 @@
+"""
+streamlit_app.py
+Multi-page Streamlit app for V11.0 (simplified).
+"""
 import streamlit as st
+import pandas as pd
+import numpy as np
+from datetime import datetime
 
-# Set page config
-st.set_page_config(
-    page_title="بوصلة الطمأنينة",
-    page_icon="🧭",
-    layout="wide"
-)
+from mother_core import MotherCore
+from create_ledger import export_ledger
 
-# Title and header
-st.title("🧭 بوصلة الطمأنينة")
-st.subheader("Compass of Tranquility - Digital Decision Engine")
-st.write("---")
+st.set_page_config(layout="wide", page_title="نُورُ الْخُوَارِزْمِيَّةِ V11.0")
+st.title("🧠 الْخُوَارِزْمِيَّةُ الأُمُّ – نُسْخَةُ الْكُلِّ الْمُتَّحِدِ V11.0")
 
-# Sidebar for theme/language selection
-with st.sidebar:
-    st.header("⚙️ الإعدادات | Settings")
-    theme = st.radio("Choose Theme:", ["Light", "Dark"])
+mc = MotherCore()
 
-# Main content
-col1, col2 = st.columns(2)
+PAGES = ["Full Run", "Single Simulation", "Noor Wall Ledger"]
+page = st.sidebar.selectbox("Choose page", PAGES)
 
-with col1:
-    st.header("📊 مدخلات القرار | Decision Inputs")
-    
-    # Input sliders for metric and volatility
-    metric = st.slider(
-        "المقياس | Metric Value",
-        min_value=0.0,
-        max_value=1.0,
-        value=0.5,
-        step=0.01,
-        help="نسبة الأداء من 0 إلى 1 | Performance ratio from 0 to 1"
-    )
-    
-    volatility = st.slider(
-        "التقلب | Volatility",
-        min_value=0.0,
-        max_value=1.0,
-        value=0.3,
-        step=0.01,
-        help="مستوى التقلب من 0 إلى 1 | Volatility level from 0 to 1"
-    )
+if page == "Full Run":
+    st.header("تشغيل جميع المحاكيات (تجريبي")
+    if st.button("Run all simulations"):
+        with st.spinner("Running simulations..."):
+            out = mc.run_all()
+        st.success("Done")
+        cols = st.columns(3)
+        i = 0
+        for name, res in out.items():
+            with cols[i % 3]:
+                st.subheader(f"{res['name']}")
+                if res['name'] == 'Schrodinger Well':
+                    psi = res['psi']
+                    prob = np.abs(psi[-1])**2
+                    st.line_chart(prob)
+                elif res['name'] == 'Lotka-Volterra':
+                    df = pd.DataFrame({"prey": res['prey'], "pred": res['pred']})
+                    st.line_chart(df)
+                else:
+                    # fallback: show checksum and metadata
+                    st.write(f"checksum: {res.get('checksum')}")
+            i += 1
 
-with col2:
-    st.header("🎚️ عتبات القرار | Decision Thresholds")
-    
-    # Threshold sliders (for customization)
-    threshold_scale_up = st.slider(
-        "عتبة التوسيع | Scale Up Threshold",
-        min_value=0.0,
-        max_value=1.0,
-        value=0.20,
-        step=0.01,
-        help="إذا كان المقياس < هذه القيمة → توسيع | If metric < this → Scale UP"
-    )
-    
-    threshold_scale_down = st.slider(
-        "عتبة التقليص | Scale Down Threshold",
-        min_value=0.0,
-        max_value=1.0,
-        value=0.70,
-        step=0.01,
-        help="إذا كان المقياس > هذه القيمة → تقليص | If metric > this → Scale DOWN"
-    )
+elif page == "Single Simulation":
+    st.header("تشغيل محاكاة واحدة")
+    sim = st.selectbox("اختر المحاكاة", ["Klein-Gordon", "Schrodinger Well", "Lotka-Volterra", "Forced Damped Oscillator", "Burgers Shock"])
+    if st.button("Run"):
+        with st.spinner(f"Running {sim}..."):
+            if sim == 'Klein-Gordon':
+                r = mc.solve_klein_gordon(nx=120, nt=200)
+                st.line_chart(np.abs(r['phi'][-1]))
+            elif sim == 'Schrodinger Well':
+                r = mc.solve_schrodinger_well(nx=160, nt=300)
+                st.line_chart(np.abs(r['psi'][-1])**2)
+            elif sim == 'Lotka-Volterra':
+                r = mc.solve_lotka_volterra(steps=1000)
+                st.line_chart(pd.DataFrame({"prey": r['prey'], "pred": r['pred']}))
+            elif sim == 'Forced Damped Oscillator':
+                r = mc.solve_forced_damped_oscillator(steps=2000)
+                st.line_chart(r['x'])
+            else:
+                r = mc.solve_burgers_shock(nx=128, nt=150)
+                st.line_chart(r['u'][-1])
+        st.write("checksum:", r.get('checksum'))
 
-st.write("---")
-
-# Decision Logic
-st.header("🔮 قرار البوصلة | Compass Decision")
-
-col_decision1, col_decision2, col_decision3 = st.columns(3)
-
-# Determine decision based on thresholds
-if metric < threshold_scale_up:
-    decision = "📈 توسيع | SCALE UP"
-    decision_color = "green"
-    decision_emoji = "📈"
-    explanation = f"المقياس ({metric:.2f}) أقل من عتبة التوسيع ({threshold_scale_up:.2f}) → يتم التوسيع"
-elif metric > threshold_scale_down:
-    decision = "📉 تقليص | SCALE DOWN"
-    decision_color = "red"
-    decision_emoji = "📉"
-    explanation = f"المقياس ({metric:.2f}) أكبر من عتبة التقليص ({threshold_scale_down:.2f}) → يتم التقليص"
 else:
-    decision = "⏸️ انتظار | WAIT"
-    decision_color = "blue"
-    decision_emoji = "⏸️"
-    explanation = f"المقياس ({metric:.2f}) في المنطقة الآمنة → الانتظار والمراقبة"
-
-# Display decision with styling
-with col_decision1:
-    st.metric("المقياس الحالي | Current Metric", f"{metric:.2f}")
-
-with col_decision2:
-    st.metric("التقلب | Volatility", f"{volatility:.2f}")
-
-with col_decision3:
-    st.metric("القرار | Decision", decision_emoji)
-
-# Large decision display
-st.markdown(f"""
-<div style="background-color: {'#d4edda' if decision_color == 'green' else '#f8d7da' if decision_color == 'red' else '#d1ecf1'}; 
-            padding: 20px; border-radius: 10px; text-align: center; border: 2px solid {'#28a745' if decision_color == 'green' else '#dc3545' if decision_color == 'red' else '#17a2b8'};">
-    <h2 style="color: {'#155724' if decision_color == 'green' else '#721c24' if decision_color == 'red' else '#0c5460'};">
-        {decision}
-    </h2>
-    <p style="color: {'#155724' if decision_color == 'green' else '#721c24' if decision_color == 'red' else '#0c5460'}; font-size: 16px;">
-        {explanation}
-    </p>
-</div>
-""", unsafe_allow_html=True)
-
-st.write("---")
-
-# Risk Assessment
-st.header("⚠️ تقييم المخاطر | Risk Assessment")
-
-risk_level = "منخفضة | Low" if volatility < 0.3 else "متوسطة | Medium" if volatility < 0.7 else "عالية | High"
-risk_color = "green" if volatility < 0.3 else "orange" if volatility < 0.7 else "red"
-
-st.markdown(f"""
-**مستوى المخاطر | Risk Level:** 
-<span style="color: {risk_color}; font-weight: bold; font-size: 18px;">
-{risk_level}
-</span>
-
-**التوصيات | Recommendations:**
-- إذا كانت المخاطر عالية: قلل حجم التغييرات | If high risk: minimize changes
-- إذا كانت المخاطر منخفضة: يمكنك اتخاذ قرارات أكثر جرأة | If low risk: you can be more aggressive
-""", unsafe_allow_html=True)
-
-st.write("---")
-
-# Footer
-st.markdown("""
-<div style="text-align: center; color: #888; margin-top: 30px;">
-    <p>🧭 <strong>بوصلة الطمأنينة</strong> | The Digital Compass for Confident Decisions</p>
-    <p style="font-size: 12px;">يا حق. الفتح الرقمي. ✅</p>
-</div>
-""", unsafe_allow_html=True)
+    st.header("جدار النور — السجل")
+    if st.button("Export ledger to JSON"):
+        out = export_ledger()
+        st.success(f"Exported to {out}")
+    st.write("آخر 50 سجلًا:")
+    try:
+        df = pd.read_sql_query('SELECT * FROM ledger ORDER BY id DESC LIMIT 50', mc.__dict__['ledger_path'] if False else 'noor_wall_ledger.db', con=None)
+    except Exception:
+        # fallback: attempt using sqlite3 directly
+        import sqlite3
+        conn = sqlite3.connect('noor_wall_ledger.db')
+        df = pd.read_sql_query('SELECT id, created_at, simulation_name, result_checksum, pulse_applied FROM ledger ORDER BY id DESC LIMIT 50', conn)
+        conn.close()
+    st.dataframe(df)
