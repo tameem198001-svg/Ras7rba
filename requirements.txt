@@ -1,8 +1,1 @@
-streamlit
-numpy
-scipy
-plotly
-pandas
-pytest
-schedule
-requests
+streamlit>=1.28.0
