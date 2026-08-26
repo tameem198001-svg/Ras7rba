@@ -1,0 +1,33 @@
+{
+  "title": "Shamsi Sovereignty + Astrolabe v2",
+  "panels": [
+    {
+      "title": "زرقاء اليمامة – التهديد",
+      "type": "stat",
+      "targets": [
+        { "expr": "shamsi_astrolabe_threat" }
+      ]
+    },
+    {
+      "title": "حالة الوعي",
+      "type": "stat",
+      "targets": [
+        { "expr": "shamsi_consciousness_state" }
+      ]
+    },
+    {
+      "title": "بيت المال – الزكاة",
+      "type": "graph",
+      "targets": [
+        { "expr": "shamsi_ethical_zakat_usd" }
+      ]
+    },
+    {
+      "title": "السيادة – النسخ",
+      "type": "stat",
+      "targets": [
+        { "expr": "shamsi_desired_replicas" }
+      ]
+    }
+  ]
+}
