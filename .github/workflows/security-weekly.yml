@@ -1,0 +1,54 @@
+name: Weekly Security Scan
+
+on:
+  schedule:
+    - cron: '0 2 * * 1' # Every Monday at 02:00 UTC
+  workflow_dispatch: {}
+
+jobs:
+  bandit-scan:
+    name: Bandit & Safety weekly scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+          python -m pip install --upgrade pip
+          pip install bandit safety
+
+      - name: Run Bandit
+        run: bandit -r . -f json -o bandit-report.json || true
+
+      - name: Run Safety
+        run: safety check --full-report || true
+
+      - name: Upload Bandit report
+        uses: actions/upload-artifact@v4
+        with:
+          name: bandit-report
+          path: bandit-report.json
+
+      - name: Create issue when findings exist (via REST API)
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -f bandit-report.json ]; then
+            n=$(jq '.results | length' bandit-report.json)
+            if [ "$n" -gt 0 ]; then
+              body="Bandit weekly scan found ${n} findings. See attached artifact in the workflow run.\n\nSeal: 55066-55055"
+              payload=$(jq -n --arg t "security: weekly Bandit findings (${n})" --arg b "$body" '{title:$t, body:$b, labels:["security"] }')
+              curl -s -X POST "https://api.github.com/repos/${GITHUB_REPOSITORY}/issues" \
+                -H "Authorization: token ${GITHUB_TOKEN}" \
+                -H "Accept: application/vnd.github+json" \
+                -d "$payload" || true
+            fi
+          fi
