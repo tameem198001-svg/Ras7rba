@@ -1,0 +1,6 @@
+streamlit
+sqlite-utils
+requests
+beautifulsoup4
+lxml
+pytest

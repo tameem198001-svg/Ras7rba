@@ -1,0 +1,13 @@
+# Byte-compiled / virtual env
+__pycache__/
+.venv/
+.env
+
+# Database
+*.db
+
+# OS files
+.DS_Store
+
+# Python
+*.pyc
